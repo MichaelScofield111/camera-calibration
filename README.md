@@ -1,7 +1,8 @@
 # camera calibration
 
-![img](./assets/title.png)
-
+<div align="center">  
+  <img width="400" alt="图片描述" src="./assets/title.png">  
+</div>
 ## state
 ***
 :fire: 
