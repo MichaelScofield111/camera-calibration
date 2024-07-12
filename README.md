@@ -1,12 +1,10 @@
 # camera calibration
 
-<div align="center">
-  <img width="400" alt="image" src="https://github.com/MichaelScofield111/camera-calibration/assets/1.png">
-</div>
+![img](./assets/title.png)
 
 ## state
 ***
-:fire: \
+:fire: 
 
 ## about
 ***
