@@ -12,3 +12,8 @@ the goal of this project is to complete
 the camera calibration algorithm in `rust`
 for refactoring the original `c++` implementation 
 of the camera calibration algorithm.
+
+## ref 
+
+- https://github.com/gaoxiang12/slambook-en
+- https://github.com/code-cp/camera_calibration

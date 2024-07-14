@@ -1,4 +1,4 @@
-use nalgebra::{self as na, ComplexField};
+use nalgebra::{self as na, ComplexField, Transform};
 
 // get skew-symmetric matrix
 fn skew(vector : na::Vector3<f64>) -> na::Matrix3<f64> {
@@ -54,7 +54,7 @@ fn log_map(v : na::Isometry3::<f64>) -> na::Vector6<f64> {
 
     // quaternion to angel-axis
     let theta = 2.0 * quat.scalar().acos();
-    let n = quat.vector() / theta / ((0.5 * theta).sin() + 1e-6);
+    let n = quat.vector() / ((0.5 * theta).sin() + 1e-6);
     let r_v = theta * n;
     
     // t =  Jp --> p = t* J^-1
@@ -71,6 +71,17 @@ fn log_map(v : na::Isometry3::<f64>) -> na::Vector6<f64> {
 
 }
 
+// Jacobian transformed point SE(3)
+fn exp_map_jacobian(Transformed_point : &na::Point3<f64>) -> na::Matrix3x6<f64> {
+    let mut ret = na::Matrix3x6::zeros();
+    ret.fixed_slice_mut::<3, 3>(0, 0)
+        .copy_from(&na::Matrix3::<f64>::identity());
+    ret.fixed_slice_mut::<3,3>(0, 3)
+        .copy_from(&(-skew(Transformed_point.coords)));
+
+    return ret;
+}
+
 // projects a point in camera frame to images
 fn project(
     // fx, fy, cx, cy
@@ -80,6 +91,23 @@ fn project(
             params[1] * pt.y / pt.z + params[3],
         )
     }
+
+    /// Jacobian of projection wrt 3D point in camera frame 
+/// ref slam book eq. 6.43
+fn proj_jacobian_wrt_point(
+    // fx, fy, cx, cy
+    camera_model: &na::Vector4<f64>,
+    transformed_pt: &na::Point3<f64>,  
+) -> na::Matrix2x3<f64> {
+    na::Matrix2x3::<f64>::new(
+        camera_model[0]/transformed_pt.z, 
+        0.0, 
+        -transformed_pt.x*camera_model[0]/transformed_pt.z.powi(2), 
+        0.0,
+        camera_model[1]/transformed_pt.z, 
+        -transformed_pt.y*camera_model[1]/transformed_pt.z.powi(2), 
+    )
+}
 
 struct Calibration<'a> {
     model_pts : &'a Vec<na::Point3<f64>>,
