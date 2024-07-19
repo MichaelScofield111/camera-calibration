@@ -1,3 +1,5 @@
+use std::vec;
+
 use nalgebra::{self as na, ComplexField, Transform};
 
 // get skew-symmetric matrix
@@ -114,6 +116,31 @@ struct Calibration<'a> {
     image_pts_set : &'a Vec<Vec<na::Point2<f64>>>,
 }
 
+impl <'a> Calibration<'a> {
+    
+    // state: fx, fy ,cx, cy and all se(3) =  4 + + * num_images
+    fn decode_param(
+        &self,
+        param : &na::DVector<f64>,
+    ) -> (na::Vector4<f64>, Vec<na::Isometry3<f64>>) {
+        let camera_model = param.fixed_slice::<4, 1>(0, 0).clone_owned();
+
+        let transforms = self.
+        image_pts_set
+        .iter()
+        .enumerate()
+        .map(
+            |(i, _)| 
+            {
+                let se3: na::Vector6<f64> = param.fixed_slice::<6,1>(4+6*i, 0).clone_owned(); 
+                exp_map(&se3)
+            }
+        ).collect::<Vec<_>>(); 
+                                
+        (camera_model, transforms)
+    }
+}
+
 fn main() {
     // create table 11 * 11 int the xy plane
     let mut source_pts : Vec<na::Point3<f64>> = Vec::new();
@@ -142,4 +169,12 @@ fn main() {
              na::Vector3::<f64>::new(-0.2, -0.2, -0.2),
          ),
      ];
+
+     // transform from model frame to camera frame
+     let transform_pts = transforms
+     .iter()
+     .map(|t| source_pts.iter().map(|p| t * p).collect::<Vec<_>>()).collect::<Vec<_>>();
+    
+     // project to image
+     
 }
