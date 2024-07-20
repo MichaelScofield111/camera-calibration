@@ -4,8 +4,11 @@
   <img width="400" alt="图片描述" src="./assets/title.png">  
 </div>
 
+## Usage
+`cargo run`
+
 ## state
-:fire: 
+:white_check_mark: 
 
 ## about
 the goal of this project is to complete
