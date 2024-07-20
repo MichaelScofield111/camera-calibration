@@ -1,13 +1,13 @@
 use std::vec;
 
-use nalgebra::{self as na, ComplexField, Transform};
+use nalgebra as na;
 
 // get skew-symmetric matrix
 fn skew(vector : na::Vector3<f64>) -> na::Matrix3<f64> {
     let mut ans = na::Matrix3::zeros();
     ans[(0, 1)] = -vector[2];
     ans[(0, 2)] = vector[1];
-    ans[(1, 0)] = vector[3];
+    ans[(1, 0)] = vector[2];
     ans[(1, 2)] = -vector[0];
     ans[(2, 0)] = -vector[1];
     ans[(2, 1)] = vector[0];
@@ -50,7 +50,7 @@ fn exp_map(v : &na::Vector6<f64>) -> na::Isometry3<f64> {
 }
 
 // from SE(3) -> se(3)
-fn log_map(v : na::Isometry3::<f64>) -> na::Vector6<f64> {
+fn log_map(v : &na::Isometry3::<f64>) -> na::Vector6<f64> {
     let t = v.translation.vector;
     let quat = v.rotation;
 
@@ -74,12 +74,12 @@ fn log_map(v : na::Isometry3::<f64>) -> na::Vector6<f64> {
 }
 
 // Jacobian transformed point SE(3)
-fn exp_map_jacobian(Transformed_point : &na::Point3<f64>) -> na::Matrix3x6<f64> {
+fn exp_map_jacobian(transformed_point : &na::Point3<f64>) -> na::Matrix3x6<f64> {
     let mut ret = na::Matrix3x6::zeros();
     ret.fixed_slice_mut::<3, 3>(0, 0)
         .copy_from(&na::Matrix3::<f64>::identity());
     ret.fixed_slice_mut::<3,3>(0, 3)
-        .copy_from(&(-skew(Transformed_point.coords)));
+        .copy_from(&(-skew(transformed_point.coords)));
 
     return ret;
 }
@@ -94,7 +94,20 @@ fn project(
         )
     }
 
-    /// Jacobian of projection wrt 3D point in camera frame 
+    /// Jacobian of projection wrt fx, fy, cx, cy 
+fn proj_jacobian_wrt_params(transformed_pt: &na::Point3<f64>) -> na::Matrix2x4<f64> {
+    na::Matrix2x4::<f64>::new(
+        transformed_pt.x / transformed_pt.z, 
+        0.0, 
+        1.0, 
+        0.0, 
+        0.0,
+        transformed_pt.y / transformed_pt.z, 
+        0.0, 
+        1.0, 
+    )
+}
+
 /// ref slam book eq. 6.43
 fn proj_jacobian_wrt_point(
     // fx, fy, cx, cy
@@ -138,12 +151,12 @@ impl <'a> Calibration<'a> {
         ).collect::<Vec<_>>(); 
                                 
         (camera_model, transforms)
-    }
+    }     
 }
 
 impl Calibration<'_> {
     // calculate residual
-    fn apply(&self, p : na::DVector<f64>) -> na::DVector<f64> {
+    fn apply(&self, p : &na::DVector<f64>) -> na::DVector<f64> {
         let (camera_model, transform) = self.decode_param(&p);
 
         let num_images = self.image_pts_set.len();
@@ -166,6 +179,67 @@ impl Calibration<'_> {
 
         residual
     }
+
+    fn jacobian(&self, p : &na::DVector<f64>) -> na::DMatrix<f64> {
+        let (camera_model, transforms) = self.decode_param(p);
+        
+        let num_images = self.image_pts_set.len();
+        let num_target_points = self.model_pts.len();
+        let num_residuals = num_images * num_target_points; 
+        let num_unknowns = 6*num_images + 4; 
+        let mut jacobian = na::DMatrix::<f64>::zeros(num_residuals*2, num_unknowns); 
+
+        let mut residual_idx = 0; 
+        for (tfrom_idx, transform) in transforms.iter().enumerate() {
+            for target_pt in self.model_pts.iter() {
+                let transformed_point = transform * target_pt; 
+
+                jacobian
+                    .fixed_slice_mut::<2,4>(residual_idx, 0)
+                    .copy_from(&proj_jacobian_wrt_params(&transformed_point)); 
+
+                let proj_jacobian_wrt_point = 
+                    proj_jacobian_wrt_point(&camera_model, &transformed_point);
+                let transform_jacobian_wrt_transform = exp_map_jacobian(&transformed_point); 
+            
+                jacobian
+                    .fixed_slice_mut::<2, 6>(residual_idx, 4+tfrom_idx*6)
+                    .copy_from(&(proj_jacobian_wrt_point*transform_jacobian_wrt_transform)); 
+
+                residual_idx += 2; 
+            }
+        }
+
+        jacobian
+    }
+    
+    /// slam book sec. 5.2.2
+    fn gauss_newton(&self, params: &na::DVector<f64>, max_iter: usize, tolerance: f64) -> na::DVector<f64> {
+            // params size is mx1 
+            let mut params = params.clone(); 
+    
+            for _ in 0..max_iter {
+                // residual size is 2n x 1 
+                let residual = self.apply(&params);
+                // jacobian size is 2n x m 
+                let jacobian = self.jacobian(&params);
+    
+                // Solve the normal equations: J^T * J * delta_params = J^T * residual
+                // svd solve Solves the system self * x = b where self is the decomposed matrix and x the unknown.
+                let delta_params = na::linalg::SVD::new(&jacobian.transpose() * &jacobian, true, true)
+                    .solve(&(&jacobian.transpose() * &residual), tolerance)
+                    .unwrap_or(na::DVector::zeros(params.len()));
+    
+                params -= delta_params.clone();
+    
+                // Check for convergence
+                if delta_params.norm() < tolerance {
+                    break;
+                }
+            }
+    
+            params
+        }   
 }
 
 fn main() {
@@ -218,7 +292,55 @@ fn main() {
         model_pts: &source_pts, 
         image_pts_set: &imaged_pts, 
     };
-     
+   // initial guess 
+   let mut init_param = na::DVector::<f64>::zeros(4+imaged_pts.len()*6); 
+
+   // Arbitrary guess for camera model
+   // NOTE, cannot be too far away from gt 
+   init_param[0] = 510.0; // fx
+   init_param[1] = 510.0; // fy
+   init_param[2] = 300.0; // cx
+   init_param[3] = 200.0; // cy
+
+   // Arbitrary guess for poses (3m in front of the camera with no rotation)
+   // We have to convert this to a 6D lie algebra element to populate the parameter
+   // vector.
+   let init_pose_lie = log_map(&na::Isometry3::translation(0.0, 0.0, 3.0));
+
+   init_param
+       .fixed_slice_mut::<6, 1>(4, 0)
+       .copy_from(&init_pose_lie);
+   init_param
+       .fixed_slice_mut::<6, 1>(4 + 6, 0)
+       .copy_from(&init_pose_lie);
+   init_param
+       .fixed_slice_mut::<6, 1>(4 + 6 * 2, 0)
+       .copy_from(&init_pose_lie);
+
+   // Solve with Gauss Newton
+   let max_iter = 100;
+   let tolerance = 1e-6;
+   let res: na::Matrix<f64, na::Dynamic, na::Const<1>, na::VecStorage<f64, na::Dynamic, na::Const<1>>> = calibration_solver.gauss_newton(&init_param, max_iter, tolerance);
+
+   // Print intrinsics results
+   eprintln!("ground truth intrinsics: {}", camera_model);
+   eprintln!(
+       "optimized intrinsics: {}",
+       res.fixed_slice::<4, 1>(0, 0)
+   );
+
+   // Print transforms
+   for (i, t) in transforms.iter().enumerate() {
+       eprintln!("ground truth transform[{}]: {}", i, t);
+       eprintln!(
+           "optimized result[{}]: {}\n",
+           i,
+           exp_map(
+               &res.fixed_slice::<6, 1>(4 + 6 * i, 0)
+                   .clone_owned()
+           )
+       );
+   }     
 
     
 }
