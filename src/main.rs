@@ -141,6 +141,33 @@ impl <'a> Calibration<'a> {
     }
 }
 
+impl Calibration<'_> {
+    // calculate residual
+    fn apply(&self, p : na::DVector<f64>) -> na::DVector<f64> {
+        let (camera_model, transform) = self.decode_param(&p);
+
+        let num_images = self.image_pts_set.len();
+        let num_traget_points = self.model_pts.len();
+        let num_residuals = num_images * num_traget_points;
+        let mut residual = na::DVector::<f64>::zeros(num_residuals * 2);
+        let mut residual_index = 0;
+        for (image_pts, transform) in self.image_pts_set.iter().zip(transform.iter()) {
+            for (observer_image_pt, target_pt) in image_pts.iter().zip(self.model_pts.iter()) {
+                // calculate transform point from model frame to camera frame
+                let transform_point = transform * target_pt;
+                // project the point to the image
+                let projected_pt = project(&camera_model, &transform_point);
+                let individual_residual = projected_pt - observer_image_pt;
+                residual.fixed_slice_mut::<2,1>(residual_index, 0)
+                .copy_from(&individual_residual);
+            residual_index += 2;
+            }
+        }
+
+        residual
+    }
+}
+
 fn main() {
     // create table 11 * 11 int the xy plane
     let mut source_pts : Vec<na::Point3<f64>> = Vec::new();
@@ -155,7 +182,7 @@ fn main() {
 
      // Ground truth camera-from-model transforms for three "images"
      // new: translation, axisangle
-     let transforms = vec![
+     let transforms: Vec<nalgebra::Isometry<f64, nalgebra::Unit<nalgebra::Quaternion<f64>>, 3>> = vec![
          na::Isometry3::<f64>::new(
              na::Vector3::<f64>::new(-0.1, 0.1, 2.0),
              na::Vector3::<f64>::new(-0.2, 0.2, 0.2),
@@ -171,10 +198,27 @@ fn main() {
      ];
 
      // transform from model frame to camera frame
-     let transform_pts = transforms
+     let transformed_pts = transforms
      .iter()
      .map(|t| source_pts.iter().map(|p| t * p).collect::<Vec<_>>()).collect::<Vec<_>>();
     
-     // project to image
+    // project to image 
+    let imaged_pts = transformed_pts
+        .iter()
+        .map(|t_list| {
+            t_list
+                .iter()
+                .map(|t| project(&camera_model, t))
+                .collect::<Vec<na::Point2<f64>>>()
+        })
+        .collect::<Vec<_>>(); 
+
+    // create calibration data 
+    let calibration_solver = Calibration {
+        model_pts: &source_pts, 
+        image_pts_set: &imaged_pts, 
+    };
      
+
+    
 }
