@@ -1,6 +1,6 @@
-use std::{thread::scope, vec};
+use std::vec;
 
-use nalgebra as na;
+use nalgebra::{self as na};
 
 // get skew-symmetric matrix
 fn skew(vector: na::Vector3<f64>) -> na::Matrix3<f64> {
@@ -15,6 +15,7 @@ fn skew(vector: na::Vector3<f64>) -> na::Matrix3<f64> {
     ans
 }
 
+// docs 1.2
 fn calculate_j(theta: f64, n: &na::Vector3<f64>) -> na::Matrix3<f64> {
     let i3 = na::Matrix3::<f64>::identity();
 
@@ -76,17 +77,19 @@ fn log_map(v: &na::Isometry3<f64>) -> na::Vector6<f64> {
     ret
 }
 
+// docs 1.4
 // Jacobian transformed point SE(3)
 fn exp_map_jacobian(transformed_point: &na::Point3<f64>) -> na::Matrix3x6<f64> {
     let mut ret = na::Matrix3x6::zeros();
     ret.fixed_slice_mut::<3, 3>(0, 0)
         .copy_from(&na::Matrix3::<f64>::identity());
     ret.fixed_slice_mut::<3, 3>(0, 3)
-        .copy_from(&(-skew(transformed_point.coords)));
+        .copy_from(&-(skew(transformed_point.coords)));
 
-    return ret;
+    ret
 }
 
+// docs 1.5
 // projects a point in camera frame to images
 fn project(
     // fx, fy, cx, cy
@@ -99,7 +102,8 @@ fn project(
     )
 }
 
-/// Jacobian of projection wrt fx, fy, cx, cy
+// docs 1.6
+// Jacobian of projection wrt fx, fy, cx, cy
 fn proj_jacobian_wrt_params(transformed_pt: &na::Point3<f64>) -> na::Matrix2x4<f64> {
     na::Matrix2x4::<f64>::new(
         transformed_pt.x / transformed_pt.z,
@@ -113,7 +117,8 @@ fn proj_jacobian_wrt_params(transformed_pt: &na::Point3<f64>) -> na::Matrix2x4<f
     )
 }
 
-/// ref slam book eq. 6.43
+// docs 1.7
+// ref slam book eq. 6.43
 fn proj_jacobian_wrt_point(
     // fx, fy, cx, cy
     camera_model: &na::Vector4<f64>,
@@ -122,15 +127,17 @@ fn proj_jacobian_wrt_point(
     na::Matrix2x3::<f64>::new(
         camera_model[0] / transformed_pt.z,
         0.0,
-        -transformed_pt.x * camera_model[0] / transformed_pt.z.powi(2),
+        -(transformed_pt.x / transformed_pt.z.powi(2) * camera_model[0]),
         0.0,
         camera_model[1] / transformed_pt.z,
-        -transformed_pt.y * camera_model[1] / transformed_pt.z.powi(2),
+        -(transformed_pt.y / transformed_pt.z.powi(2) * camera_model[1]),
     )
 }
 
 struct Calibration<'a> {
+    // 3d position
     model_pts: &'a Vec<na::Point3<f64>>,
+    // 2d position
     image_pts_set: &'a Vec<Vec<na::Point2<f64>>>,
 }
 
@@ -142,7 +149,8 @@ impl<'a> Calibration<'a> {
     ) -> (na::Vector4<f64>, Vec<na::Isometry3<f64>>) {
         let camera_model = param.fixed_slice::<4, 1>(0, 0).clone_owned();
 
-        let transforms = self
+        // every picture form  check board -> camera
+        let transform = self
             .image_pts_set
             .iter()
             .enumerate()
@@ -152,7 +160,7 @@ impl<'a> Calibration<'a> {
             })
             .collect::<Vec<_>>();
 
-        (camera_model, transforms)
+        (camera_model, transform)
     }
 }
 
@@ -161,6 +169,7 @@ impl Calibration<'_> {
     fn apply(&self, p: &na::DVector<f64>) -> na::DVector<f64> {
         let (camera_model, transform) = self.decode_param(&p);
 
+        // picture numbers
         let num_images = self.image_pts_set.len();
         let num_traget_points = self.model_pts.len();
         let num_residuals = num_images * num_traget_points;
