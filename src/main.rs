@@ -135,6 +135,11 @@ fn proj_jacobian_wrt_point(
 }
 
 struct Calibration<'a> {
+    /// model_pts is check board of 3d position
+    /// to create Ground truth camera-from-model transforms for three "images"
+    /// apply transforms for every point of model_pts
+    /// to get transformed point of 3d point
+    /// then to project the images_pts_set(2d point)
     // 3d position
     model_pts: &'a Vec<na::Point3<f64>>,
     // 2d position
@@ -167,6 +172,7 @@ impl<'a> Calibration<'a> {
 impl Calibration<'_> {
     // calculate residual
     fn apply(&self, p: &na::DVector<f64>) -> na::DVector<f64> {
+        // the transform include 3 transform(Isometry3)
         let (camera_model, transform) = self.decode_param(&p);
 
         // picture numbers
